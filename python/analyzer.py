@@ -161,54 +161,114 @@ def scrape_tcgplayer_listings(product_name: str):
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
+    # Try multiple URL patterns for TCGPlayer
     candidates = [
+        f"https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q={quote_plus(product_name)}",
+        f"https://www.tcgplayer.com/search/all/product?q={quote_plus(product_name)}",
         f"https://www.tcgplayer.com/search?query={quote_plus(product_name)}",
-        f"https://www.tcgplayer.com/search/products?query={quote_plus(product_name)}",
-        f"https://www.tcgplayer.com/search?q={quote_plus(product_name)}",
+        f"https://www.tcgplayer.com/search/pokemon?q={quote_plus(product_name)}",
     ]
 
-    def extract_counts(text: str):
-        # common patterns
-        m = re.search(r"([0-9,]+)\s+listings", text, re.I)
+    def extract_counts(text: str, html_soup=None):
+        """Extract listing/seller counts from text or HTML."""
         listings = None
         sellers = None
-        if m:
-            try:
-                listings = int(m.group(1).replace(",", ""))
-            except Exception:
-                listings = None
-
-        m2 = re.search(r"([0-9,]+)\s+(?:sellers|seller|offers)", text, re.I)
-        if m2:
-            try:
-                sellers = int(m2.group(1).replace(",", ""))
-            except Exception:
-                sellers = None
+        
+        # Try multiple regex patterns for listings
+        patterns = [
+            r"([0-9,]+)\s+(?:available\s+)?listings?",  # "123 listings" or "123 available listings"
+            r"listings?[:\s]+([0-9,]+)",  # "listings: 123"
+            r"([0-9,]+)\s+results?",  # "123 results"
+            r"showing\s+([0-9,]+)",  # "showing 123"
+        ]
+        
+        for pattern in patterns:
+            m = re.search(pattern, text, re.I)
+            if m:
+                try:
+                    listings = int(m.group(1).replace(",", ""))
+                    break
+                except Exception:
+                    pass
+        
+        # Try multiple patterns for sellers
+        seller_patterns = [
+            r"([0-9,]+)\s+(?:sellers?|vendors?|offers?)",
+            r"(?:from|by)\s+([0-9,]+)\s+sellers?",
+        ]
+        
+        for pattern in seller_patterns:
+            m2 = re.search(pattern, text, re.I)
+            if m2:
+                try:
+                    sellers = int(m2.group(1).replace(",", ""))
+                    break
+                except Exception:
+                    pass
+        
+        # Try searching in specific HTML elements if soup is provided
+        if html_soup and (listings is None or sellers is None):
+            # Look for data attributes or specific classes that might contain counts
+            for elem in html_soup.find_all(attrs={"class": re.compile(r"listing|result|count", re.I)}):
+                elem_text = elem.get_text()
+                if listings is None:
+                    for pattern in patterns:
+                        m = re.search(pattern, elem_text, re.I)
+                        if m:
+                            try:
+                                listings = int(m.group(1).replace(",", ""))
+                                break
+                            except Exception:
+                                pass
 
         return listings, sellers
 
     last_err = None
+    attempts = []
+    
     for url in candidates:
         try:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, headers=headers, timeout=15)
+            attempts.append({"url": url, "status": resp.status_code})
+            
+            if resp.status_code != 200:
+                last_err = f"http_{resp.status_code}"
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            page_text = soup.get_text(separator=" ")
+            
+            # Try extracting with both text and soup
+            listings, sellers = extract_counts(page_text, soup)
+            
+            if listings is not None or sellers is not None:
+                return {
+                    "listings_count": listings,
+                    "sellers_count": sellers,
+                    "error": None,
+                    "source": url,
+                    "note": "data found via static HTML scraping"
+                }
         except Exception as e:
             last_err = str(e)
-            continue
-        if resp.status_code != 200:
-            last_err = f"http_{resp.status_code}"
+            attempts.append({"url": url, "error": str(e)})
             continue
 
-        page_text = BeautifulSoup(resp.text, "html.parser").get_text(separator=" ")
-        listings, sellers = extract_counts(page_text)
-        if listings is not None or sellers is not None:
-            return {"listings_count": listings, "sellers_count": sellers, "error": None, "source": url}
-
-    # If we reach here, static HTML didn't reveal counts. TCGplayer often
-    # renders marketplace counts with JavaScript; in that case use Selenium
-    # or their APIs (if available) to retrieve dynamic content.
-    return {"listings_count": None, "sellers_count": None, "error": last_err, "source": None}
+    # If we reach here, static HTML didn't reveal counts. TCGplayer likely
+    # renders marketplace counts with JavaScript; would need Selenium/Playwright
+    # or access to their API to retrieve dynamic content.
+    return {
+        "listings_count": None,
+        "sellers_count": None,
+        "error": "TCGPlayer data not found in static HTML (likely requires JavaScript rendering)",
+        "source": None,
+        "note": "TCGPlayer renders listing counts dynamically. Alternative: Check TCGPlayer website directly, use their API (requires partnership), or implement Selenium-based scraping.",
+        "attempts": attempts[:2],  # Include first 2 attempts for debugging
+        "recommendation": f"Visit https://www.tcgplayer.com/search/pokemon/product?q={quote_plus(product_name)} to check supply manually"
+    }
 
 
 def get_set_info(set_name: str):
