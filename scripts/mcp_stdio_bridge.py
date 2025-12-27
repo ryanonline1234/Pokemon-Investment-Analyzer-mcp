@@ -36,11 +36,53 @@ def safe_print_json(obj):
 
 
 def handle_initialize(msg):
-    # Reply with minimal JSON-RPC initialize result so the client proceeds.
+    # Reply with properly formatted MCP initialize result.
+    # Tools are declared via capabilities and listed separately in tools/list request.
+    protocol_version = msg.get("params", {}).get("protocolVersion", "2025-06-18")
     resp = {
         "jsonrpc": "2.0",
         "id": msg.get("id"),
-        "result": {"capabilities": {}}
+        "result": {
+            "protocolVersion": protocol_version,
+            "serverInfo": {
+                "name": "pokemon-investment-analyzer-mcp",
+                "version": "0.1"
+            },
+            "capabilities": {
+                "tools": {}
+            }
+        }
+    }
+    safe_print_json(resp)
+
+
+def handle_tools_list(msg):
+    # Reply with list of available tools for Claude to call
+    resp = {
+        "jsonrpc": "2.0",
+        "id": msg.get("id"),
+        "result": {
+            "tools": [
+                {
+                    "name": "analyze",
+                    "description": "Analyze a Pokémon TCG set for investment potential.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "set_name": {
+                                "type": "string",
+                                "description": "Name of the Pokémon TCG set to analyze."
+                            },
+                            "use_ai": {
+                                "type": "boolean",
+                                "description": "Whether to use AI for explanation."
+                            }
+                        },
+                        "required": ["set_name"]
+                    }
+                }
+            ]
+        }
     }
     safe_print_json(resp)
 
@@ -79,6 +121,16 @@ def main():
         if isinstance(msg, dict) and msg.get("method") == "initialize":
             handle_initialize(msg)
             # Do NOT break or exit; keep the loop alive for further requests
+            continue
+
+        # Handle tools/list request
+        if isinstance(msg, dict) and msg.get("method") == "tools/list":
+            handle_tools_list(msg)
+            continue
+
+        # Ignore notifications (messages without id - no response expected)
+        if isinstance(msg, dict) and "id" not in msg:
+            print(f"[mcp_stdio_bridge] Ignoring notification: {msg.get('method')}", file=sys.stderr, flush=True)
             continue
 
         # Otherwise, forward to the HTTP MCP endpoint
