@@ -1,0 +1,8 @@
+{
+  "name": "pokemon-investment-analyzer-mcp",
+  "version": "0.1",
+  "description": "MCP server for Pokemon Investment Analyzer - exposes analysis endpoints and AI adapter",
+  "entrypoint": "mcp.server:app",
+  "protocol": "mcp-0.1",
+  "routes": ["/analyze", "/health"]
+}

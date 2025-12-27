@@ -1,0 +1,8 @@
+requests
+beautifulsoup4
+pytest
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+httpx
